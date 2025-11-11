@@ -3,6 +3,9 @@ from enum import Enum, auto
 from lexer import TokType
 from error import Error, Pos
 
+# NOTE: Var with IMPOSSIBLE value raises exception
+IMPOSSIBLE = object()
+
 class TypeKind(Enum):
     i64 = auto()
     i32 = auto()
@@ -75,13 +78,7 @@ class UnaryOpRepr:
         self.type: UnaryOpType = unaryopTypeRepr
         self.start: Pos = start
 
-class CallRepr: pass
-ValidMathableType = IntLiteralRepr|FloatLiteralRepr|BinaryOpRepr|UnaryOpRepr|CallRepr
 
-class MathRepr:
-    def __init__(self, seq: list[ValidMathableType]):
-        # NOTE: this means that <get_one() 2 +> is valid
-        self.seq: list[ValidMathableType] = seq
 
 class TypeRepr:
     def __init__(self, base_type: TypeKind, details: Optional[DetailsData], start: Pos):
@@ -144,6 +141,7 @@ class CincDirectiveRepr(DirectiveRepr):
 #       BUT why do only returned numbers should be enclosed with <> ? ( a i32 = 5; / ret <5>; )
 #       WAS ACTUAL to implementation: ValidExpression = CallRepr|DirectiveRepr|MathRepr
 
+class MathRepr: pass
 CompositeExpression = CallRepr|DirectiveRepr
 MinorExpression = MathRepr|IntLiteralRepr
 
@@ -162,18 +160,30 @@ class BodyRepr:
 class Var:
     def __init__(self, decl: DeclRepr, value: Any):
         self.decl: DeclRepr = decl
-        self.value: Any = value
+        self._value: Any = value
+    
+    @property
+    def value(self) -> Any:
+        assert(self._value != IMPOSSIBLE)
+        return self._value
 
 class UserDefinedTypeData(DetailsData):
     def __init__(self, ancestor_type: TypeRepr, this_name: str):
         self.ancestor_type: TypeRepr = ancestor_type
         self.this_name: str = this_name
 
+# NOTE: DeclRepr is valid mathable becuase of  
+ValidMathableType = IntLiteralRepr|FloatLiteralRepr|BinaryOpRepr|UnaryOpRepr|CallRepr|Var
+class MathRepr:
+    def __init__(self, seq: list[ValidMathableType]):
+        # NOTE: this means that <get_one() 2 +> is valid
+        self.seq: list[ValidMathableType] = seq
+
 class Context:
     def __init__(self, prev: Context):
         self.prev_ctx: Context = prev
         self.vars: list[Var] = []
-    
+
     def get_var_named(self, name: str) -> Optional[Var]:
         for var in self.vars:
             if var.decl.name == name: return var
@@ -183,7 +193,6 @@ class Context:
         if self.get_var_named(var.decl.name) is not None:
             return Error(f"there is already a variable named `{var.decl.name}` in the context")
         self.vars.append(var)
-        return None
 
 class AST:
     def __init__(self, directives: list[DirectiveRepr], vars: list[Var]):

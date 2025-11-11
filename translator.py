@@ -44,6 +44,8 @@ def _transt_math_expr(math: ast.MathRepr) -> str:
     for mathable in math.seq:
         if   type(mathable) in [ast.IntLiteralRepr, ast.FloatLiteralRepr]:
             stack.append(str(mathable.value))
+        elif type(mathable) == ast.Var:
+            stack.append(mathable.decl.name)
         elif type(mathable) == ast.BinaryOpRepr:
             b = stack.pop()
             a = stack.pop()
@@ -101,7 +103,7 @@ def test_translate():
     _ast = parse(read("""
                       #cinc "<stdio.h>";
 
-                      sum fn(a i32, b i32) i32 := { ret <1 2 + 3 - ++>; }
+                      sum fn(a i32, b i32) i32 := { ret <a b +>; }
                       """))
     if type(_ast) == Error:
         print(_ast)

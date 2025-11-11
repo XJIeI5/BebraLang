@@ -129,13 +129,13 @@ def _parse_unary_op(feed: TokenFeed) -> ast.UnaryOpRepr | Error:
         case TokType.INC: return ast.UnaryOpRepr(ast.UnaryOpType.INC, op.pos)
     return Error(f"unknown binary operation `{op.val}`", op.pos)
 
-# TODO: add ctx
-def _parse_math(feed: TokenFeed, base_type: ast.TypeKind) -> ast.MathRepr | Error:
+def _parse_math(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> ast.MathRepr | Error:
     if (start := feed.consume_and_check(TokType.OP_TRI, "math expression should start with open triangle `<`, not `{}`")) == Error:
         return start
     
     seq = []
     maybe_cl_tri = feed.peek(0)
+
     # TODO: add call support
     while maybe_cl_tri.type != TokType.CL_TRI:
         maybe_cl_tri = feed.peek(0)
@@ -152,6 +152,11 @@ def _parse_math(feed: TokenFeed, base_type: ast.TypeKind) -> ast.MathRepr | Erro
                 if type(op := _parse_unary_op(feed)) == Error:
                     return op
                 seq.append(op)
+            case TokType.VAR:
+                if (var := ctx.get_var_named(maybe_cl_tri.val)) is None:
+                    return Error(f"unknown declaration `{maybe_cl_tri.val}`", maybe_cl_tri.pos)
+                feed.consume()
+                seq.append(var)
             case _:
                 return Error(f"unknown mathable expression `{maybe_cl_tri.val}`", maybe_cl_tri.pos)
         maybe_cl_tri = feed.peek(0)
@@ -165,12 +170,11 @@ def _parse_math(feed: TokenFeed, base_type: ast.TypeKind) -> ast.MathRepr | Erro
 def _parse_call(feed: TokenFeed):
     raise NotImplementedError
 
-# TODO: add ctx
-def _parse_minor_expression(feed: TokenFeed, base_type: ast.TypeKind) -> ast.MinorExpression | Error:
+def _parse_minor_expression(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> ast.MinorExpression | Error:
     base = feed.peek(0)
     match base.type:
         case TokType.INT_LIT: return _parse_int_literal(feed, base_type)
-        case TokType.OP_TRI:  return _parse_math(feed, base_type)
+        case TokType.OP_TRI:  return _parse_math(feed, ctx, base_type)
 
 # TODO: add ctx
 def _parse_composite_expression(feed: TokenFeed) -> ast.CompositeExpression | Error:
@@ -180,8 +184,7 @@ def _parse_composite_expression(feed: TokenFeed) -> ast.CompositeExpression | Er
         case TokType.OP_PAR: return _parse_call(feed)
     return Error(f"unknow composite expression `{base.val}{action.val}`", base.pos)
 
-# TODO: add ctx
-def _parse_ret_statement(feed: TokenFeed, ret_type: ast.TypeRepr) -> ast.RetStatement | Error:
+def _parse_ret_statement(feed: TokenFeed, ctx: ast.Context, ret_type: ast.TypeRepr) -> ast.RetStatement | Error:
     if type(start := feed.consume_and_check(TokType.RET, "return statement should start with `ret` keyword, not `{}`")) == Error:
         return start
     if ret_type is None and (t := feed.peek(0)).type != TokType.SEMI:
@@ -192,31 +195,30 @@ def _parse_ret_statement(feed: TokenFeed, ret_type: ast.TypeRepr) -> ast.RetStat
         return ast.RetStatement(None, start.pos)
 
     if type(expr := _parse_composite_expression(feed)) == Error:
-        if type(expr := _parse_minor_expression(feed, ret_type.base_type)):
+        if type(expr := _parse_minor_expression(feed, ctx, ret_type.base_type)) == Error:
             if not feed.len():
                 return Error(f"unknown expression which starts with `{feed.peek(0).val}`", start.pos)
+            return expr
         if type(t := feed.consume_and_check(TokType.SEMI, "return statement should end with semicolon `;`, not `{}`")) == Error:
             return t
     return ast.RetStatement(expr, start.pos)
 
-# TODO: add ctx
-def _parse_statement(feed: TokenFeed, fn_repr: ast.FnSignatureRepr) -> ast.ValidStatement | Error:
+def _parse_statement(feed: TokenFeed, ctx: ast.Context, fn_repr: ast.FnSignatureRepr) -> ast.ValidStatement | Error:
     base = feed.peek(0)
     match base.type:
         # TODO: get ret type from ctx
-        case TokType.RET: return _parse_ret_statement(feed, fn_repr.ret)
+        case TokType.RET: return _parse_ret_statement(feed, ctx, fn_repr.ret)
     return _parse_composite_expression(feed)
 
 
-# TODO: add ctx
-def _parse_body(feed: TokenFeed, callee_decl: ast.DeclRepr) -> ast.BodyRepr | Error:
+def _parse_body(feed: TokenFeed, ctx: ast.Context, callee_decl: ast.DeclRepr) -> ast.BodyRepr | Error:
     if type(start := feed.consume_and_check(TokType.OP_CBR, "body should begin with curly brace `{`, not `{}`")) == Error:
         return start
     
     statements = []
     maybe_cl_cbr = feed.peek(0)
     while maybe_cl_cbr.type != TokType.CL_CBR:
-        if type(state := _parse_statement(feed, callee_decl.type.details)) == Error:
+        if type(state := _parse_statement(feed, ctx, callee_decl.type.details)) == Error:
             return state
         statements.append(state)
         maybe_cl_cbr = feed.peek(0)
@@ -238,7 +240,11 @@ def _parse_assignment(feed: TokenFeed, ctx: ast.Context) -> ast.Var | Error:
 
     match base.type:
         case TokType.OP_CBR: # NOTE: ... := {}
-            if type(body := _parse_body(feed, decl)) == Error:
+            new_ctx = ast.Context(ctx)
+            assert(type(details := decl.type.details) == ast.FnSignatureRepr)
+            for arg in details.args:
+                new_ctx.append_var(ast.Var(arg, ast.IMPOSSIBLE))
+            if type(body := _parse_body(feed, new_ctx, decl)) == Error:
                 return body
             return ast.Var(decl, body)
 
