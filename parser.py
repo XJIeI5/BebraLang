@@ -46,6 +46,7 @@ def _parse_fn_signature_repr_type(feed: TokenFeed, ctx: ast.Context) -> ast.FnSi
             return Error(f"arguments in function declaration should be separated by comma `,` not `{maybe_cl_par.val}`", maybe_cl_par.pos)
         if maybe_cl_par.type == TokType.COM:
             feed.consume()
+        maybe_cl_par = feed.peek(0)
 
     # TODO: read arguments
     if type(t := feed.consume_and_check(TokType.CL_PAR, "function declaration should contain information about arguments which ends with paren `)`, not `{}`")) == Error:
@@ -61,40 +62,30 @@ def _parse_fn_signature_repr_type(feed: TokenFeed, ctx: ast.Context) -> ast.FnSi
 def _parse_type(feed: TokenFeed, ctx: ast.Context) -> ast.TypeRepr | Error:
     start = feed.peek(0)
     if start.type != TokType.VAR: return Error(f"type declaration should be string literal, like `i32`, not `{start.val}`", start.pos)
-    match start.val:
-        case "i64":
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.i64, None, start.pos)
-        case "i32":
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.i32, None, start.pos)
-        case "i16":
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.i16, None, start.pos)
-        case "i8" :
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.i8 , None, start.pos)
+    
+    if start.val == "fn":
+        if type(fn_repr := _parse_fn_signature_repr_type(feed, ctx)) == Error:
+            return fn_repr
+        return ast.TypeRepr(ast.TypeKind.fn, fn_repr, start.pos)
+    
+    def match_type(typename: str) -> Optional[ast.TypeRepr]:
+        match typename:
+            case "i64": return ast.TypeRepr(ast.TypeKind.i64, None, start.pos)
+            case "i32": return ast.TypeRepr(ast.TypeKind.i32, None, start.pos)
+            case "i16": return ast.TypeRepr(ast.TypeKind.i16, None, start.pos)
+            case "i8" : return ast.TypeRepr(ast.TypeKind.i8 , None, start.pos)
 
-        case "u64":
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.u64, None, start.pos)
-        case "u32":
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.u32, None, start.pos)
-        case "u16":
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.u16, None, start.pos)
-        case "u8" :
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.u8 , None, start.pos)
+            case "u64": return ast.TypeRepr(ast.TypeKind.u64, None, start.pos)
+            case "u32": return ast.TypeRepr(ast.TypeKind.u32, None, start.pos)
+            case "u16": return ast.TypeRepr(ast.TypeKind.u16, None, start.pos)
+            case "u8" : return ast.TypeRepr(ast.TypeKind.u8 , None, start.pos)
 
-        case "type":
-            feed.consume()
-            return ast.TypeRepr(ast.TypeKind.type, None, start.pos)
-        case "fn"  :
-            if type(fn_repr := _parse_fn_signature_repr_type(feed, ctx)) == Error:
-                return fn_repr
-            return ast.TypeRepr(ast.TypeKind.fn, fn_repr, start.pos)
+            case "type": return ast.TypeRepr(ast.TypeKind.type, None, start.pos)
+        return None
+    
+    if (t := match_type(start.val)) is not None:
+        feed.consume()
+        return t
     
     # NOTE: we are looking for user-defined var in the ctx
     if (v := ctx.get_var_named(start.val)) is not None:
@@ -111,6 +102,11 @@ def _parse_int_literal(feed: TokenFeed, base_type: ast.TypeKind) -> ast.IntLiter
     
     # TODO: assignement and type-convertion check
     return ast.IntLiteralRepr(byte_count, int(base.val), base.pos)
+
+def _parse_str_literal(feed: TokenFeed) -> ast.StringLiteralRepr | Error:
+    if type(base := feed.consume_and_check(TokType.STR_LIT, "string literal should begin with quotation, like `\"123\"`, not `{}`")) == Error:
+        return base
+    return ast.StringLiteralRepr(base.val, base.pos)
 
 def _parse_bin_op(feed: TokenFeed) -> ast.BinaryOpRepr | Error:
     op = feed.consume()
@@ -152,7 +148,7 @@ def _parse_math(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> a
                 if type(op := _parse_unary_op(feed)) == Error:
                     return op
                 seq.append(op)
-            case TokType.VAR:
+            case TokType.VAR: # TODO: _parse_expression
                 if (var := ctx.get_var_named(maybe_cl_tri.val)) is None:
                     return Error(f"unknown declaration `{maybe_cl_tri.val}`", maybe_cl_tri.pos)
                 feed.consume()
@@ -166,22 +162,100 @@ def _parse_math(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> a
         return end
     return ast.MathRepr(seq)
 
-# TODO: add ctx
-def _parse_call(feed: TokenFeed):
-    raise NotImplementedError
+def _parse_call(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> ast.CallRepr | Error:
+    if type(start := feed.consume_and_check(TokType.VAR, "you should call using string literal, like `dump(@sink)`, not `{}`")) == Error:
+        return start
+    if (callable := ctx.get_var_named(start.val)) is None:
+        return Error(f"unknown function `{start.val}`", start.pos)
 
-def _parse_minor_expression(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> ast.MinorExpression | Error:
-    base = feed.peek(0)
-    match base.type:
-        case TokType.INT_LIT: return _parse_int_literal(feed, base_type)
-        case TokType.OP_TRI:  return _parse_math(feed, ctx, base_type)
+    if type(t := feed.consume_and_check(TokType.OP_PAR, "call expression should contain open paren `(` to specify passed arguments, not `{}`")) == Error:
+        return t
+    
+    args = []
+    maybe_cl_par = feed.peek(0)
+    while maybe_cl_par.type != TokType.CL_PAR:
+        maybe_cl_par = feed.peek(0)
+        if type(expr := _parse_expression(feed, ctx, base_type)) == Error:
+            return expr
+        args.append(expr)
+        maybe_cl_par = feed.peek(0)
+        if maybe_cl_par.type != TokType.CL_PAR and maybe_cl_par.type != TokType.COM:
+            return Error(f"arguments in function call should be separated by comma `,` not `{maybe_cl_par.val}`", maybe_cl_par.pos)
+        if maybe_cl_par.type == TokType.COM:
+            feed.consume()
+        maybe_cl_par = feed.peek(0)
 
-# TODO: add ctx
-def _parse_composite_expression(feed: TokenFeed) -> ast.CompositeExpression | Error:
+    if type(t := feed.consume_and_check(TokType.CL_PAR, "call expression should contain close paren `)` to specify end of passed arguments, not `{}`")) == Error:
+        return t
+    
+    assert(type(callable.decl.type.details) == ast.FnSignatureRepr)
+    if (accept_len := len(callable.decl.type.details.args)) != (passed_len := len(args)):
+        return Error(f"callable function `{start.val}` accepts {accept_len} arguments, but {passed_len} passed", t.pos)
+    # TODO: type check args
+    return ast.CallRepr(callable, args, start.pos)
+
+# TODO: check if generated function exists
+def _parse_c_call(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> ast.MinorExpression | Error:
+    if type(start := feed.consume_and_check(TokType.CL_TRI, "c-call performed with close triangle `>` in front of function name, like `>printf();`, not `{}`")) == Error:
+        return start
+    if type(callable := feed.consume_and_check(TokType.VAR, "you should call using string literal, like `>print(\"Hello, World!\n\")`, not `>{}`")) == Error:
+        return callable
+    if type(t := feed.consume_and_check(TokType.OP_PAR, "call expression should contain open paren `(` to specify passed arguments, not `{}`")) == Error:
+        return t
+    
+    args = []
+    maybe_cl_par = feed.peek(0)
+    while maybe_cl_par.type != TokType.CL_PAR:
+        maybe_cl_par = feed.peek(0)
+        if type(expr := _parse_expression(feed, ctx, base_type)) == Error:
+            return expr
+        args.append(expr)
+        maybe_cl_par = feed.peek(0)
+        if maybe_cl_par.type != TokType.CL_PAR and maybe_cl_par.type != TokType.COM:
+            return Error(f"arguments in function call should be separated by comma `,` not `{maybe_cl_par.val}`", maybe_cl_par.pos)
+        if maybe_cl_par.type == TokType.COM:
+            feed.consume()
+        maybe_cl_par = feed.peek(0)
+
+    if type(t := feed.consume_and_check(TokType.CL_PAR, "call expression should contain close paren `)` to specify end of passed arguments, not `{}`")) == Error:
+        return t
+    
+    return ast.C_CallRepr(callable.val, args, start.pos)
+
+def _parse_expression(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> ast.MinorExpression | Error:
     base = feed.peek(0)
     action = feed.peek(1)
+
     match action.type:
-        case TokType.OP_PAR: return _parse_call(feed)
+        case TokType.OP_PAR: return _parse_call(feed, ctx, base_type)
+    match base.type:
+        case TokType.STR_LIT: return _parse_str_literal(feed)
+        case TokType.INT_LIT: return _parse_int_literal(feed, base_type)
+        case TokType.OP_TRI : return _parse_math(feed, ctx, base_type)
+        case TokType.CL_TRI : return _parse_c_call(feed, ctx, base_type)
+        case TokType.VAR    :
+            if (v := ctx.get_var_named(base.val)) is None:
+                return Error(f"unknown variable `{base.val}`")
+            feed.consume()
+            return v
+    
+    return Error(f"unknown minor expression `{base.val}{action.val}`", base.pos)
+
+def _parse_expression_as_statement(feed: TokenFeed, ctx: ast.Context, base_type: ast.TypeKind) -> ast.ValidStatement | Error:
+    base = feed.peek(0)
+    action = feed.peek(1)
+    match base.type:
+        case TokType.CL_TRI:
+            if type(expr := _parse_c_call(feed, ctx, base_type)) == Error: return expr
+            if type(t := feed.consume_and_check(TokType.SEMI, "statement should end with semicolon `;`, not `{}`")) == Error: return t
+            return ast.C_CallStatement(expr, expr.start)
+    
+    match action.type:
+        case TokType.OP_PAR: 
+            if type(expr := _parse_call(feed, ctx, base_type)) == Error: return expr
+            if type(t := feed.consume_and_check(TokType.SEMI, "statement should end with semicolon `;`, not `{}`")) == Error: return t
+            return ast.CallStatement(expr, expr.start)
+
     return Error(f"unknow composite expression `{base.val}{action.val}`", base.pos)
 
 def _parse_ret_statement(feed: TokenFeed, ctx: ast.Context, ret_type: ast.TypeRepr) -> ast.RetStatement | Error:
@@ -194,13 +268,12 @@ def _parse_ret_statement(feed: TokenFeed, ctx: ast.Context, ret_type: ast.TypeRe
             return t
         return ast.RetStatement(None, start.pos)
 
-    if type(expr := _parse_composite_expression(feed)) == Error:
-        if type(expr := _parse_minor_expression(feed, ctx, ret_type.base_type)) == Error:
-            if not feed.len():
-                return Error(f"unknown expression which starts with `{feed.peek(0).val}`", start.pos)
-            return expr
-        if type(t := feed.consume_and_check(TokType.SEMI, "return statement should end with semicolon `;`, not `{}`")) == Error:
-            return t
+    if type(expr := _parse_expression(feed, ctx, ret_type.base_type)) == Error:
+        if not feed.len():
+            return Error(f"unknown expression which starts with `{feed.peek(0).val}`", start.pos)
+        return expr
+    if type(t := feed.consume_and_check(TokType.SEMI, "return statement should end with semicolon `;`, not `{}`")) == Error:
+        return t
     return ast.RetStatement(expr, start.pos)
 
 def _parse_statement(feed: TokenFeed, ctx: ast.Context, fn_repr: ast.FnSignatureRepr) -> ast.ValidStatement | Error:
@@ -208,7 +281,8 @@ def _parse_statement(feed: TokenFeed, ctx: ast.Context, fn_repr: ast.FnSignature
     match base.type:
         # TODO: get ret type from ctx
         case TokType.RET: return _parse_ret_statement(feed, ctx, fn_repr.ret)
-    return _parse_composite_expression(feed)
+    # NOTE: assume that int literals would be i64
+    return _parse_expression_as_statement(feed, ctx, ast.TypeKind.i64)
 
 
 def _parse_body(feed: TokenFeed, ctx: ast.Context, callee_decl: ast.DeclRepr) -> ast.BodyRepr | Error:
@@ -271,6 +345,7 @@ def _parse_highest_level(feed: TokenFeed, ctx: ast.Context) -> ast.DirectiveRepr
         return _parse_directive(feed)
     if base.type == TokType.VAR:
         return _parse_assignment(feed, ctx)
+    return Error(f"on highest context of a program there are only two possible expressions: assignment (`a i32 := 69;`) and directive call (`#cinc \"<stdio.h>\"`)", base.pos)
 
 def parse(toks: list[Token]) -> ast.AST | Error:
     feed: TokenFeed = TokenFeed(toks)
@@ -279,19 +354,44 @@ def parse(toks: list[Token]) -> ast.AST | Error:
     ctx = ast.Context(None)
     while feed.len():
         v = _parse_highest_level(feed, ctx)
-        if   type(v) == ast.Var: vars.append(v)
-        elif isinstance(v, ast.DirectiveRepr): dirvs.append(v)
-        elif type(v) == ast.Error: return v
+        if type(v) == ast.Var:
+            vars.append(v)
+            ctx.append_var(v)
+        elif isinstance(v, ast.DirectiveRepr):
+            dirvs.append(v)
+        elif type(v) == ast.Error:
+            return v
     return ast.AST(dirvs, vars)
 
 def test_parse():
-    print(parse(read("add i32 := 60;")))
-    print(parse(read("myint type := i32;")))
-    a = parse(read("""
-                   myint type := i32;
-                   test fn(a myint, b myint) myint := { ret 5; }
-                   """))
-    print(a)
+    r = read("add i32 := 60;")
+    print(parse(r))
+
+    r = read("myint type := i32;")
+    print(parse(r))
+
+    r = read(
+        """
+        myint type := i32;
+        test fn(a myint, b myint) myint := { ret 5; }
+        """
+    )
+    print(parse(r))
+    
+    r = read(
+        """
+        echo fn(a i32) i32 := { ret a; }
+        foo fn() := { echo(echo(5)); }
+        """
+    )
+    print(a := parse(r))
+
+    r = read(
+        """
+        main fn() := { >printf("Hello, Bebralang!"); }
+        """
+    )
+    print(a := parse(r))
     pass
 
 

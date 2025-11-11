@@ -38,27 +38,53 @@ def _get_type_name(t: ast.TypeRepr) -> str:
         return t.details.this_name
     return type_lookup[t.base_type]
 
+def _get_str_arg(arg: ast.ValidCallArg) -> str:
+    match type(arg):
+        case ast.Var: return arg.decl.name
+        case ast.CallRepr: return _transt_call_expr(arg)
+        case ast.IntLiteralRepr: return str(arg.value)
+        case ast.StringLiteralRepr: return f"\"{arg.value}\""
+
+def _get_str_mathable(mathable: ast.ValidMathableType) -> str:
+    match type(mathable):
+        case ast.Var: return mathable.decl.name
+        case ast.CallRepr: return _transt_call_expr(mathable)
+        case ast.IntLiteralRepr: return str(mathable.value)
+        case ast.BinaryOpRepr: return binop_lookup[mathable.type]
+        case ast.UnaryOpRepr: return unop_lookup[mathable.type]
+
 def _transt_math_expr(math: ast.MathRepr) -> str:
     stack: list[str] = []
 
     for mathable in math.seq:
         if   type(mathable) in [ast.IntLiteralRepr, ast.FloatLiteralRepr]:
-            stack.append(str(mathable.value))
+            stack.append(_get_str_mathable(mathable))
         elif type(mathable) == ast.Var:
-            stack.append(mathable.decl.name)
+            stack.append(_get_str_mathable(mathable))
         elif type(mathable) == ast.BinaryOpRepr:
             b = stack.pop()
             a = stack.pop()
-            stack.append(f"({a}{binop_lookup[mathable.type]}{b})")
+            stack.append(f"({a}{_get_str_mathable(mathable)}{b})")
         elif type(mathable) == ast.UnaryOpRepr:
             a = stack.pop()
-            stack.append(f"({a}{unop_lookup[mathable.type]})")
+            stack.append(f"({a}{_get_str_mathable(mathable)})")
     
     return stack.pop()
+
+def _transt_call_expr(call: ast.CallRepr) -> str:
+    args = ", ".join([_get_str_arg(arg) for arg in call.args])
+    return f"{call.callable.decl.name}({args})"
+
+def _transt_c_call_expr(c_call: ast.C_CallRepr) -> str:
+    args = ", ".join([_get_str_arg(arg) for arg in c_call.args])
+    return f"{c_call.callable}({args})"
 
 def _transt_expr(expr: ast.CompositeExpression|ast.MinorExpression) -> str:
     match type(expr):
         case ast.IntLiteralRepr: return str(expr.value)
+        case ast.StringLiteralRepr: return expr.value
+        case ast.CallRepr: return _transt_call_expr(expr)
+        case ast.C_CallRepr: return _transt_c_call_expr(expr)
         case ast.MathRepr: return _transt_math_expr(expr)
     return ""
 
@@ -70,20 +96,23 @@ def _transt_body(body: ast.BodyRepr) -> str:
     for state in body.statements:
         match type(state):
             case ast.RetStatement: statements.append(_transt_ret_statement(state))
-    return "\n".join(statements)
+            case ast.CallStatement: statements.append(f"{_transt_call_expr(state.call_repr)};")
+            case ast.C_CallStatement: statements.append(f"{_transt_c_call_expr(state.c_call_repr)};")
+    return "\n    ".join(statements)
 
-def _transt_fn(name: str, fn_repr: ast.FnSignatureRepr, body: ast.BodyRepr) -> str:
+def _transt_fn_def(name: str, fn_repr: ast.FnSignatureRepr, body: ast.BodyRepr) -> str:
     ret = "void" if fn_repr.ret is None else _get_type_name(fn_repr.ret)
     args = ", ".join([f"{_get_type_name(arg.type)} {arg.name}" for arg in fn_repr.args])
     return f"{ret} {name}({args}) {{\n{_transt_body(body)}}}"
+
 
 def _transt_typedef(name: str, decl_type: ast.TypeRepr) -> str:
     return f"typedef {_get_type_name(decl_type)} {name};\n"
 
 def _transt_var(var: ast.Var) -> str:
     match type(var.value):
-        case ast.BodyRepr: return _transt_fn(var.decl.name, var.decl.type.details, var.value)
-        case ast.TypeRepr       : return _transt_typedef(var.decl.name, var.value)
+        case ast.BodyRepr: return _transt_fn_def(var.decl.name, var.decl.type.details, var.value)
+        case ast.TypeRepr: return _transt_typedef(var.decl.name, var.value)
 
 def _transt_cinc_directive(cinc: ast.CincDirectiveRepr) -> str:
     return f"#include {cinc.path}\n"
@@ -103,7 +132,9 @@ def test_translate():
     _ast = parse(read("""
                       #cinc "<stdio.h>";
 
-                      sum fn(a i32, b i32) i32 := { ret <a b +>; }
+                      main fn() := {
+                        >printf("Hello, Bebralang!\n");
+                      }
                       """))
     if type(_ast) == Error:
         print(_ast)

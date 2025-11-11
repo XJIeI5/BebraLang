@@ -68,6 +68,11 @@ class FloatLiteralRepr:
         self.value: float = value
         self.start: Pos = start
 
+class StringLiteralRepr:
+    def __init__(self, value: str, start: Pos):
+        self.value: str = value.replace("\n", "\\n").replace("\t", "\\t").replace("\r", "\\r").replace("\b", "\\b")
+        self.start: Pos = start
+
 class BinaryOpRepr:
     def __init__(self, binopTypeRepr: BinOpType, start: Pos):
         self.type: BinOpType = binopTypeRepr
@@ -109,12 +114,6 @@ class FnDeclRepr:
         self.ret: TypeRepr = ret
         self.start: Pos = start
 
-class CallRepr:
-    def __init__(self):
-        self.callable: Var
-        self.args: list[Var]
-        self.start: Pos
-# TODO: check call is valid
 
 class PtrRepr:
     def __init__(self, base_type: TypeRepr, start: Pos):
@@ -142,15 +141,32 @@ class CincDirectiveRepr(DirectiveRepr):
 #       WAS ACTUAL to implementation: ValidExpression = CallRepr|DirectiveRepr|MathRepr
 
 class MathRepr: pass
-CompositeExpression = CallRepr|DirectiveRepr
-MinorExpression = MathRepr|IntLiteralRepr
+class CallRepr: pass
+class C_CallRepr: pass
+class Var: pass
+MinorExpression = MathRepr|IntLiteralRepr|FloatingPointError|StringLiteralRepr|CallRepr|C_CallRepr|Var
 
-class RetStatement:
-    def __init__(self, expr: CompositeExpression|MinorExpression|None, start: Pos):
-        self.expr: CompositeExpression|MinorExpression|None = expr
+class CallStatement:
+    def __init__(self, call_repr: CallRepr, start: Pos):
+        self.call_repr: CallRepr = call_repr
         self.start: Pos = start
 
-ValidStatement = CompositeExpression|RetStatement
+class C_CallStatement:
+    def __init__(self, c_call_repr: C_CallRepr, start: Pos):
+        self.c_call_repr: C_CallRepr = c_call_repr
+        self.start: Pos = start
+
+class DirectiveCallStatement:
+    def __init__(self, dirv: DirectiveRepr, start: Pos):
+        self.dirv: DirectiveRepr = dirv
+        self.start: Pos = start
+
+class RetStatement:
+    def __init__(self, expr: MinorExpression|None, start: Pos):
+        self.expr: MinorExpression|None = expr
+        self.start: Pos = start
+
+ValidStatement = CallStatement|C_CallStatement|RetStatement|DirectiveCallStatement
 class BodyRepr:
     def __init__(self, statements: list[ValidStatement], start: Pos):
         self.statements: list[ValidStatement] = statements
@@ -167,12 +183,25 @@ class Var:
         assert(self._value != IMPOSSIBLE)
         return self._value
 
+ValidCallArg = IntLiteralRepr|FloatLiteralRepr|StringLiteralRepr|CallRepr|Var
+class CallRepr:
+    def __init__(self, callable: Var, args: list[ValidCallArg], start: Pos):
+        self.callable: Var = callable
+        self.args: list[ValidCallArg] = args
+        self.start: Pos = start
+# TODO: check call is valid
+
+class C_CallRepr:
+    def __init__(self, callable: str, args: list[ValidCallArg], start: Pos):
+        self.callable: str = callable
+        self.args: list[ValidCallArg] = args
+        self.start: Pos = start
+
 class UserDefinedTypeData(DetailsData):
     def __init__(self, ancestor_type: TypeRepr, this_name: str):
         self.ancestor_type: TypeRepr = ancestor_type
         self.this_name: str = this_name
 
-# NOTE: DeclRepr is valid mathable becuase of  
 ValidMathableType = IntLiteralRepr|FloatLiteralRepr|BinaryOpRepr|UnaryOpRepr|CallRepr|Var
 class MathRepr:
     def __init__(self, seq: list[ValidMathableType]):
@@ -183,7 +212,13 @@ class Context:
     def __init__(self, prev: Context):
         self.prev_ctx: Context = prev
         self.vars: list[Var] = []
+        if prev is not None:
+            self._copy_vars()
 
+    def _copy_vars(self):
+        for var in self.prev_ctx.vars:
+            self.append_var(var)
+    
     def get_var_named(self, name: str) -> Optional[Var]:
         for var in self.vars:
             if var.decl.name == name: return var
@@ -191,7 +226,7 @@ class Context:
 
     def append_var(self, var: Var) -> Optional[Error]:
         if self.get_var_named(var.decl.name) is not None:
-            return Error(f"there is already a variable named `{var.decl.name}` in the context")
+            return Error(f"there is already a variable named `{var.decl.name}` in the context", var.decl.start)
         self.vars.append(var)
 
 class AST:

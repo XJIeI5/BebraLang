@@ -211,7 +211,9 @@ class Tokenizer:
 
 
 def read(tape: str) -> list[Token] | Error:
-    runner = Tokenizer(" ".join(tape.split()))
+    tape = " ".join(tape.replace("\\", "\\\\").split(" "))
+    # tape = tape.replace("\\n", "\\\\n")
+    runner = Tokenizer(tape)
     buf = []
     while type((tok := runner.consume_tok())) != Error:
         buf.append(tok)
