@@ -1,9 +1,5 @@
 #cinc "<stdio.h>";
 
-sum fn(a i32 = -100, b i32 = -50) i32 := {
-    ret <a b +>;
-}
-
 fib fn(n u64) u64 := {
     a, c u64;
     b u64 := 1;
@@ -29,12 +25,6 @@ show_fib fn() := {
         >printf("%llu\t", fib(i));
     }
     >printf("\n");
-}
-
-show_sum() := {
-    >printf("%d\n", sum(100, 50));
-    >printf("%d\n", sum(100, _));
-    >printf("%d\n", sum(_,  50));
 }
 
 main fn() := {

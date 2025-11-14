@@ -80,7 +80,7 @@ def _get_str_arg(arg: ast.ValidCallArg) -> str:
         case ast.CallRepr: return _transt_call_expr(arg)
         case ast.IntLiteralRepr: return str(arg.value)
         case ast.StringLiteralRepr: return f"\"{arg.value}\""
-    raise NotImplementedError
+    raise NotImplementedError(type(arg))
 
 def _get_str_mathable(mathable: ast.ValidMathableType) -> str:
     match type(mathable):
@@ -90,7 +90,7 @@ def _get_str_mathable(mathable: ast.ValidMathableType) -> str:
         case ast.BinaryOpRepr: return binop_lookup[mathable.type]
         case ast.UnaryOpRepr: return unop_lookup[mathable.type]
         case ast.BuiltinRepr: return builtin_lookup[mathable.type]
-    raise NotImplementedError
+    raise NotImplementedError(type(mathable))
 
 def _transt_math_expr(math: ast.MathRepr) -> str:
     stack: list[str] = []
@@ -111,6 +111,8 @@ def _transt_math_expr(math: ast.MathRepr) -> str:
             b = stack.pop()
             a = stack.pop()
             stack.append(f"({a}{_get_str_mathable(mathable)}{b})")
+        else:
+            raise NotImplementedError
     
     return stack.pop()
 
@@ -191,7 +193,8 @@ def _transt_var(var: ast.Var) -> str:
 def _transt_cinc_directive(cinc: ast.CincDirectiveRepr) -> str:
     return f"#include {cinc.path}\n"
 
-def _transt_directive(dirv: ast.DirectiveRepr) -> str:
+def _transt_directive(dirv_call: ast.DirectiveCallStatement) -> str:
+    dirv = dirv_call.dirv
     if type(dirv) == ast.CincDirectiveRepr: return _transt_cinc_directive(dirv)
 
 def get_builtin() -> str:

@@ -4,6 +4,7 @@ from subprocess import run
 from error import Error
 from lexer import read
 from parser import parse
+from checker import check
 from translator import translate_to
 
 def compile():
@@ -20,7 +21,9 @@ def compile():
     if type(_ast := parse(toks)) == Error:
         print(_ast)
         return
-    
+    if len(errs := check(_ast)) > 0:
+        print(*errs)
+        return
     with open(f"{args.output}.c", mode="w", encoding="utf-8") as f:
         translate_to(_ast, f)
 

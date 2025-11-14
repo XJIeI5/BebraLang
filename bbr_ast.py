@@ -126,6 +126,32 @@ class TypeRepr:
             buf += self.details._tostr(sub+2, "details = ")
         return buf
 
+class TypePromiseRepr:
+    def __init__(self, typename: str, start: Pos):
+        self.typename: str = typename
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        buf = f"{" "*sub}{tag}type(promise) {self.typename}\n"
+        return buf
+
+class VarPromise:
+    def __init__(self, name: str, start: Pos):
+        self.name: str = name
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        return f"{" "*sub}{tag}var(promise) {self.name}\n"
+
+Type = TypePromiseRepr | TypeRepr
+
+class MathRepr: pass
+class CallRepr: pass
+class C_CallRepr: pass
+class Var: pass
+class BuiltinRepr: pass
+MinorExpression = MathRepr|IntLiteralRepr|FloatLiteralRepr|StringLiteralRepr|CallRepr|C_CallRepr|Var|VarPromise|BuiltinRepr
+
 class DeclRepr:
     def __init__(self, name: str, decl_type: Type, start: Pos):
         self.name: str = name
@@ -136,6 +162,7 @@ class DeclRepr:
         buf = f"{" "*sub}{tag}decl {self.name}:\n"
         buf += self.type._tostr(sub+2, "type = ")
         return buf
+
 
 class FnDeclRepr:
     def __init__(self, decl: DeclRepr, by_defualt_val: Optional[MinorExpression]):
@@ -201,20 +228,9 @@ class UseDefualtRepr:
         return f"{" "*sub}{tag}use_defualt\n"
 
 
-class VarPromise:
-    def __init__(self, name: str, start: Pos):
-        self.name: str = name
-        self.start: Pos = start
-    
-    def _tostr(self, sub: int, tag: str) -> str:
-        return f"{" "*sub}{tag}var(promise) {self.name}\n"
 
-class MathRepr: pass
-class CallRepr: pass
-class C_CallRepr: pass
-class Var: pass
-class BuiltinRepr: pass
-MinorExpression = MathRepr|IntLiteralRepr|FloatLiteralRepr|StringLiteralRepr|CallRepr|C_CallRepr|Var|VarPromise|BuiltinRepr
+
+
 
 class CallStatement:
     def __init__(self, call_repr: CallRepr, start: Pos):
@@ -278,6 +294,30 @@ class DirectiveCallStatement:
         buf += self.dirv._tostr(sub+2, "dirv = ")
         return buf
 
+class RetStatement:
+    def __init__(self, expr: MinorExpression|None, start: Pos):
+        self.expr: MinorExpression|None = expr
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        buf = f"{" "*sub}{tag}ret:\n"
+        if self.expr is not None:
+            buf += self.expr._tostr(sub+2, "expr = ")
+        return buf
+
+# TODO: make it throught inheritance
+ValidStatement = CallStatement|C_CallStatement|RetStatement|DirectiveCallStatement|InitStatement|DeclStatement
+class BodyRepr:
+    def __init__(self, statements: list[ValidStatement], start: Pos):
+        self.statements: list[ValidStatement] = statements
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        buf = f"{" "*sub}{tag}body:\n"
+        for state in self.statements:
+            buf += state._tostr(sub+2, "state = ")
+        return buf
+
 class ForStatement:
     def __init__(self, init: Optional[DeclRepr|Var], cond: Optional[MathRepr], inc: Optional[MathRepr], body: BodyRepr, start: Pos):
         self.init: Optional[DeclRepr|Var] = init
@@ -297,30 +337,8 @@ class ForStatement:
         buf += self.body._tostr(sub+2, "body = ")
         return buf
 
-class RetStatement:
-    def __init__(self, expr: MinorExpression|None, start: Pos):
-        self.expr: MinorExpression|None = expr
-        self.start: Pos = start
-    
-    def _tostr(self, sub: int, tag: str) -> str:
-        buf = f"{" "*sub}{tag}ret:\n"
-        if self.expr is not None:
-            buf += self.expr._tostr(sub+2, "expr = ")
-        return buf
 
 
-# TODO: make it throught inheritance
-ValidStatement = CallStatement|C_CallStatement|RetStatement|DirectiveCallStatement|InitStatement|DeclStatement
-class BodyRepr:
-    def __init__(self, statements: list[ValidStatement], start: Pos):
-        self.statements: list[ValidStatement] = statements
-        self.start: Pos = start
-    
-    def _tostr(self, sub: int, tag: str) -> str:
-        buf = f"{" "*sub}{tag}body:\n"
-        for state in self.statements:
-            buf += state._tostr(sub+2, "state = ")
-        return buf
 
 class BuiltinRepr:
     def __init__(self, kind: BuiltinKind, start: Pos):
@@ -424,17 +442,6 @@ class PtrRepr(DetailsData):
         buf = f"{" "*sub}{tag}ptr:\n"
         buf += self.ancestor_type._tostr(sub+2, "ancestor = ")
         return buf
-
-class TypePromiseRepr:
-    def __init__(self, typename: str, start: Pos):
-        self.typename: str = typename
-        self.start: Pos = start
-    
-    def _tostr(self, sub: int, tag: str) -> str:
-        buf = f"{" "*sub}{tag}type(promise) {self.typename}\n"
-        return buf
-
-Type = TypePromiseRepr | TypeRepr
 
 class AST:
     def __init__(self, directives: list[ValidDirective], vars: list[Var]):

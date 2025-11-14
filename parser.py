@@ -5,7 +5,7 @@ from error import Error, Pos
 from feed import TokenFeed
 import bbr_ast as ast
 
-def _parse_directive(feed: TokenFeed) -> ast.DirectiveRepr | Error:
+def _parse_directive(feed: TokenFeed) -> ast.DirectiveCallStatement | Error:
     if type(start := feed.consume_and_check(TokType.HASH, "directive call should begin with hashtag `#`, not `{}`")) == Error:
         return start
     command = feed.consume()
@@ -15,7 +15,8 @@ def _parse_directive(feed: TokenFeed) -> ast.DirectiveRepr | Error:
                 return arg
             if type(t := feed.consume_and_check(TokType.SEMI, "directive call should end with semicolon `;`, not `{}`")) == Error:
                 return t
-            return ast.CincDirectiveRepr(arg.val, start.pos)
+            cinc = ast.CincDirectiveRepr(arg.val, start.pos)
+            return ast.DirectiveCallStatement(cinc, start.pos)
 
 
 def _parse_decls(feed: TokenFeed) -> list[ast.DeclRepr] | Error:
@@ -411,7 +412,7 @@ def _parse_assignment(feed: TokenFeed) -> ast.Var | Error:
             return var
     return Error(f"unknown way to assign variable to `{base.val}`", base.pos)
 
-def _parse_highest_level(feed: TokenFeed) -> ast.DirectiveRepr | ast.Var | Error:
+def _parse_highest_level(feed: TokenFeed) -> ast.DirectiveCallStatement | ast.Var | Error:
     base = feed.peek(0)
     if base.type == TokType.HASH:
         return _parse_directive(feed)
@@ -427,7 +428,7 @@ def parse(toks: list[Token]) -> ast.AST | Error:
         v = _parse_highest_level(feed)
         if type(v) == ast.Var:
             vars.append(v)
-        elif isinstance(v, ast.DirectiveRepr):
+        elif type(v) == ast.DirectiveCallStatement:
             dirvs.append(v)
         elif type(v) == ast.Error:
             return v

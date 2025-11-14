@@ -90,7 +90,7 @@ def _check_statement(state: ast.ValidStatement, ctx: Context) -> Optional[Error]
         case ast.RetStatement: return _check_ret_statement(state, ctx)
         # TODO: check for statement
         case ast.ForStatement: return _check_for_statement(state, ctx)
-        case ast.C_CallStatement: return
+        case ast.C_CallStatement: return _check_c_call_expr(state.c_call_repr, ctx)
         case ast.CallStatement: return _check_call_expr(state.call_repr, ctx)
         # TODO: check for statement
         case ast.DirectiveCallStatement: return
@@ -151,16 +151,31 @@ def _check_call_expr(call: ast.CallRepr, ctx: Context) -> Optional[Error]:
     fn_repr: ast.FnSignatureRepr = call.callable.decl.type.details
     if (fn_len := len(fn_repr.args)) != (call_len := len(call.args)):
         return Error(f"you try to call function with {fn_len} arguments passing {call_len}", call.start)
-    for in_fn, in_call in zip(fn_repr.args, call.args):
-        if type(in_call) == ast.UseDefualtRepr and in_fn.by_defualt_val is None:
+    gen = (i for i in range(len(fn_repr.args)))
+    for i, in_fn, in_call in zip(gen, fn_repr.args, call.args):
+        if type(in_call) == ast.VarPromise:
+            if type(actual_var := _resolve_var_promise(in_call, ctx)) == Error:
+                return actual_var
+            call.args[i] = actual_var
+        elif type(in_call) == ast.UseDefualtRepr and in_fn.by_defualt_val is None:
             return Error(f"you try to use defualt value of argument without defualt value", in_call.start)
         # TODO: check types
+
+def _check_c_call_expr(c_call: ast.C_CallRepr, ctx: Context) -> Optional[Error]:
+    for i, in_call in enumerate(c_call.args):
+        if type(in_call) == ast.VarPromise:
+            if type(actual_var := _resolve_var_promise(in_call, ctx)) == Error:
+                return actual_var
+            c_call.args[i] = actual_var
+        else:
+            if type(err := _check_expression(in_call, ctx)) == Error:
+                return err
 
 def _check_expression(expr: ast.MinorExpression, ctx: Context) -> Optional[Error]:
     match type(expr):
         case ast.MathRepr: return _check_math_expr(expr, ctx)
         case ast.IntLiteralRepr | ast.FloatLiteralRepr | ast.StringLiteralRepr : return
-        case ast.C_CallRepr: return
+        case ast.C_CallRepr: return _check_c_call_expr(expr, ctx)
         case ast.CallRepr: return _check_call_expr(expr, ctx)
         case ast.Var: return
         case ast.VarPromise: raise NotImplementedError
@@ -201,5 +216,6 @@ def check(_ast: ast.AST) -> list[Error]:
     for var in _ast.vars:
         if type(err := _check_init_var(var, ctx)) == Error:
             errs.append(err)
+    print(_ast)
     return errs
     
