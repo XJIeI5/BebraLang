@@ -12,6 +12,7 @@ def compile():
     parser.add_argument("filename")
     parser.add_argument("-o", "--output", default="out", help="specify output's file name")
     parser.add_argument("-c", action="store_true", help="result would generated c-code")
+    parser.add_argument("-t", "--tree", action="store_true", help="prints AST of program")
     args = parser.parse_args()
 
     with open(args.filename, mode="r", encoding="utf-8") as f:
@@ -21,6 +22,8 @@ def compile():
     if type(_ast := parse(toks)) == Error:
         print(_ast)
         return
+    if args.tree:
+        print(_ast)
     if len(errs := check(_ast)) > 0:
         print(*errs)
         return
