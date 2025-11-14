@@ -29,6 +29,7 @@ class TokType(Enum):
     QUOT   = auto()  # "
     COLON  = auto()  # :
     SEMI   = auto()  # ;
+    UNDR   = auto()  # _
 
     DDICK = auto() # :=
     INC   = auto() # ++
@@ -44,11 +45,11 @@ class TokType(Enum):
     CL_TRI = auto()  # >
 
     RET = auto()  # ret
-    DECL = auto() # decl
+    FOR = auto()  # for
 
     VAR       = auto()  # somevar
     INT_LIT   = auto()  # 420
-    FLOAT_LIT = auto() # 420.69
+    FLOAT_LIT = auto()  # 420.69
     STR_LIT   = auto()  # "somevar"
 
     @staticmethod
@@ -84,6 +85,7 @@ def get_from_rune(v: str, pos: Pos) -> Optional[Token]:
         case "@": return Token(TokType.AT,     v, pos)
         case ":": return Token(TokType.COLON,  v, pos)
         case ";": return Token(TokType.SEMI,   v, pos)
+        case "_": return Token(TokType.UNDR,   v, pos)
 
         case "(": return Token(TokType.OP_PAR, v, pos)
         case "[": return Token(TokType.OP_BR,  v, pos)
@@ -129,26 +131,30 @@ class Tokenizer:
         return Token(TokType.STR_LIT, string_val, self._get_pos(start_ind))
 
     # NOTE: expects that self.tape[start_ind] is digit
-    def _continue_parsing_number_lit(self, start_ind: int) -> Token | Error:
-        is_float = False
+    def _continue_parsing_number_lit(self, start_ind: int, num_is_float: bool = False) -> Token | Error:
+        _is_float = False
         buf = self.tape[start_ind]
         for offset, r in enumerate(self.tape[start_ind+1:]):
             if r.isdigit():
                 buf += r
-            elif r == "." and is_float:
+            elif r == "." and _is_float:
                 return Error(ErrorMsg.REDUNDANT_DOT, self._get_pos(start_ind+offset))
             elif r == ".":
-                is_float = True
+                _is_float = True
                 buf += r
             else:
                 break
-        toktype = TokType.FLOAT_LIT if is_float else TokType.INT_LIT
+        toktype = TokType.FLOAT_LIT if _is_float else TokType.INT_LIT
+        if num_is_float:
+            if toktype == TokType.FLOAT_LIT:
+                return Error(ErrorMsg.REDUNDANT_DOT, self._get_pos(self.tape.index(".", start_ind+1)))
+            toktype = TokType.FLOAT_LIT
         return Token(toktype, buf, self._get_pos(start_ind))
     
     def _check_on_keywords(self, v: str) -> TokType:
         match v:
-            case "ret":  return TokType.RET
-            case "decl": return TokType.DECL
+            case "ret": return TokType.RET
+            case "for": return TokType.FOR
         return TokType.VAR
     
     # NOTE: expects that self.tape[start_ind] is alpha
@@ -166,11 +172,22 @@ class Tokenizer:
         if self.cur >= len(self.tape):
             return Error(ErrorMsg.EOF, self._get_pos(len(self.tape)-1))
         r = self.tape[self.cur]
-        if r == ".":
-            res = self._continue_parsing_number_lit(self.cur)
+        if self.cur+1 < len(self.tape) and r == "-" and (next := self.tape[self.cur+1]) and ((num_is_float := next == ".") or next.isdigit()):
+            self.cur += 1
+            res = self._continue_parsing_number_lit(self.cur, num_is_float=num_is_float)
             if type(res) == Token:
-                if res.type == TokType.FLOAT_LIT:
-                    return Error(ErrorMsg.REDUNDANT_DOT, self._get_pos(self.tape.index(".", self.cur+1)))
+                self.cur += len(res.val)
+                res.val = f"-{res.val}"
+                return res
+            else:
+                self.cur -= 1
+        if self.cur+1 < len(self.tape) and r == "_" and (next := self.tape[self.cur+1]) and (next.isdigit() or next.isalpha()):
+            res = self._continue_parsing_var(self.cur)
+            self.cur += len(res.val)
+            return res
+        if r == ".":
+            res = self._continue_parsing_number_lit(self.cur, num_is_float=True)
+            if type(res) == Token:
                 self.cur += len(res.val)
                 res.type = TokType.FLOAT_LIT
             return res
@@ -211,8 +228,7 @@ class Tokenizer:
 
 
 def read(tape: str) -> list[Token] | Error:
-    tape = " ".join(tape.replace("\\", "\\\\").split(" "))
-    # tape = tape.replace("\\n", "\\\\n")
+    tape = " ".join(tape.split(" "))
     runner = Tokenizer(tape)
     buf = []
     while type((tok := runner.consume_tok())) != Error:
@@ -236,7 +252,11 @@ def test_tokenizer():
     toks = read("if v < .01 { ret error; }")
     print(*(toks+["-------"]), sep="\n")
 
-    toks = read(":= : ++")
+    toks = read(":= : ++ _1num")
+    if type(toks) == Error: print(toks)
+    print(*(toks+["-------"]), sep="\n")
+
+    toks = read("-5 -.5")
     print(*(toks+["-------"]), sep="\n")
 
 
