@@ -9,7 +9,8 @@ class ErrorMsg(Enum):
     EOF = "end of file"
 
 class Keyword(Enum):
-    fn = "fn"
+    fn  = "fn"
+    nil = "nil"
 
 class TokType(Enum):
     PLUS   = auto()  # + 
@@ -31,9 +32,11 @@ class TokType(Enum):
     SEMI   = auto()  # ;
     UNDR   = auto()  # _
 
-    DDICK = auto() # :=
-    INC   = auto() # ++
-    DEC   = auto() # --
+    DDICK     = auto() # :=
+    INC       = auto() # ++
+    DEC       = auto() # --
+    MATH_VfrP = auto() # *_
+    MATH_PfrV = auto() # &_
 
     OP_PAR = auto()  # (
     OP_BR  = auto()  # [
@@ -99,9 +102,11 @@ def get_from_rune(v: str, pos: Pos) -> Optional[Token]:
 
 def get_from_two_runes(v: str, pos: Pos) -> Optional[Token]:
     match v:
-        case ":=": return Token(TokType.DDICK, v, pos)
-        case "++": return Token(TokType.INC  , v, pos)
-        case "--": return Token(TokType.DEC  , v, pos)
+        case ":=": return Token(TokType.DDICK    , v, pos)
+        case "++": return Token(TokType.INC      , v, pos)
+        case "--": return Token(TokType.DEC      , v, pos)
+        case "*_": return Token(TokType.MATH_VfrP, v, pos)
+        case "&_": return Token(TokType.MATH_PfrV, v, pos)
     return None
 
 class Tokenizer:

@@ -49,8 +49,21 @@ binop_lookup = {
 }
 
 unop_lookup = {
-    ast.UnaryOpType.DEC: "--",
-    ast.UnaryOpType.INC: "++",
+    ast.UnaryOpType.DEC : "--",
+    ast.UnaryOpType.INC : "++",
+    ast.UnaryOpType.VfrP: "*",
+    ast.UnaryOpType.PfrV: "&",
+}
+
+class Order(Enum):
+    POSTFIX = auto()
+    PREFIX  = auto()
+
+unop_order_lookup = {
+    ast.UnaryOpType.DEC : Order.POSTFIX,
+    ast.UnaryOpType.INC : Order.POSTFIX,
+    ast.UnaryOpType.VfrP: Order.PREFIX,
+    ast.UnaryOpType.PfrV: Order.PREFIX,
 }
 
 builtin_lookup = {
@@ -72,6 +85,9 @@ def _get_defualt_value(base_type: ast.TypeKind) -> str:
 def _get_type_name(t: ast.TypeRepr) -> str:
     if type(t.details) == ast.UserDefinedTypeData:
         return t.details.this_name
+    if t.base_type == ast.TypeKind.ptr:
+        assert(type(t.details) == ast.PtrRepr)
+        return f"{_get_type_name(t.details.ancestor_type)}*"
     return type_lookup[t.base_type]
 
 def _get_str_arg(arg: ast.ValidCallArg) -> str:
@@ -80,6 +96,8 @@ def _get_str_arg(arg: ast.ValidCallArg) -> str:
         case ast.CallRepr: return _transt_call_expr(arg)
         case ast.IntLiteralRepr: return str(arg.value)
         case ast.StringLiteralRepr: return f"\"{arg.value}\""
+        case ast.PtrFromValRepr: return f"(&{arg.var.decl.name})"
+        case ast.ValFromPtrRepr: return f"(*{arg.var.decl.name})"
     raise NotImplementedError(type(arg))
 
 def _get_str_mathable(mathable: ast.ValidMathableType) -> str:
@@ -106,7 +124,10 @@ def _transt_math_expr(math: ast.MathRepr) -> str:
             stack.append(f"({a}{_get_str_mathable(mathable)}{b})")
         elif type(mathable) == ast.UnaryOpRepr:
             a = stack.pop()
-            stack.append(f"({a}{_get_str_mathable(mathable)})")
+            if unop_order_lookup[mathable.type] == Order.POSTFIX:
+                stack.append(f"({a}{_get_str_mathable(mathable)})")
+            else:
+                stack.append(f"({_get_str_mathable(mathable)}{a})")
         elif type(mathable) == ast.BuiltinRepr:
             b = stack.pop()
             a = stack.pop()
@@ -134,7 +155,7 @@ def _transt_c_call_expr(c_call: ast.C_CallRepr) -> str:
     args = ", ".join([_get_str_arg(arg) for arg in c_call.args])
     return f"{c_call.callable}({args})"
 
-def _transt_expr(expr: ast.MinorExpression) -> str:
+def _transt_expr(expr: ast.ValidExpression) -> str:
     if expr is None: return ""
     match type(expr):
         case ast.IntLiteralRepr: return str(expr.value)
@@ -174,6 +195,8 @@ def _transt_body(body: ast.BodyRepr) -> str:
             case ast.DeclStatement: statements.append(_transt_decl_statement(state))
             case ast.AssignStatement: statements.append(_transt_assign_statement(state))
             case ast.InitStatement: statements.append(_transt_init_statement(state))
+            case ast.MathStatement: statements.append(f"{_transt_math_expr(state.math_repr)};\n")
+            case _: raise NotImplementedError
     return "    ".join([""]+statements)
 
 def _transt_fn_def(name: str, fn_repr: ast.FnSignatureRepr, body: ast.BodyRepr) -> str:
@@ -217,6 +240,10 @@ def test_translate():
             ret a;
         }
 
+        inc fn(v *i32) := {
+            <v *_ ++>;
+        }
+
         fib fn(n u64) u64 := {
             a, c u64;
             b u64 := 1;
@@ -229,6 +256,8 @@ def test_translate():
         }
 
         main fn() := {
+            n i32;
+            inc(&n);
             fib(10);
             foo(_);
             foo(100);

@@ -77,8 +77,20 @@ def _parse_fn_signature_repr_type(feed: TokenFeed) -> ast.FnSignatureRepr | Erro
 
     return ast.FnSignatureRepr(decls, ret_type, start.pos)
 
+def _parse_ptr_repr(feed: TokenFeed) -> ast.PtrRepr | Error:
+    if type(start := feed.consume_and_check(TokType.ASTRKS, "pointer declaration should start with asterisk `*`, not `{}`")) == Error:
+        return start
+    if type(t := _parse_type(feed)) == Error:
+        return t
+    return ast.PtrRepr(t, start.pos)
+
 def _parse_type(feed: TokenFeed) -> ast.Type | Error:
     start = feed.peek(0)
+    if start.type == TokType.ASTRKS:
+        if type(ptr_repr := _parse_ptr_repr(feed)) == Error:
+            return ptr_repr
+        return ast.TypeRepr(ast.TypeKind.ptr, ptr_repr, start.pos)
+    
     if start.type != TokType.VAR: return Error(f"type declaration should be string literal, like `i32`, not `{start.val}`", start.pos)
     
     if start.val == "fn":
@@ -135,8 +147,10 @@ def _parse_bin_op(feed: TokenFeed) -> ast.BinaryOpRepr | Error:
 def _parse_unary_op(feed: TokenFeed) -> ast.UnaryOpRepr | Error:
     op = feed.consume()
     match op.type:
-        case TokType.DEC: return ast.UnaryOpRepr(ast.UnaryOpType.DEC, op.pos)
-        case TokType.INC: return ast.UnaryOpRepr(ast.UnaryOpType.INC, op.pos)
+        case TokType.DEC      : return ast.UnaryOpRepr(ast.UnaryOpType.DEC , op.pos)
+        case TokType.INC      : return ast.UnaryOpRepr(ast.UnaryOpType.INC , op.pos)
+        case TokType.MATH_PfrV: return ast.UnaryOpRepr(ast.UnaryOpType.PfrV, op.pos)
+        case TokType.MATH_VfrP: return ast.UnaryOpRepr(ast.UnaryOpType.VfrP, op.pos)
     return Error(f"unknown binary operation `{op.val}`", op.pos)
 
 def _parse_math(feed: TokenFeed) -> ast.MathRepr | Error:
@@ -156,7 +170,7 @@ def _parse_math(feed: TokenFeed) -> ast.MathRepr | Error:
             case TokType.PLUS|TokType.MINS|TokType.ASTRKS|TokType.DIV|TokType.PERC:
                 if type(op := _parse_bin_op(feed)) == Error: return op
                 seq.append(op)
-            case TokType.INC|TokType.DEC:
+            case TokType.INC|TokType.DEC|TokType.MATH_VfrP|TokType.MATH_PfrV:
                 if type(op := _parse_unary_op(feed)) == Error: return op
                 seq.append(op)
             case TokType.AT:
@@ -172,7 +186,7 @@ def _parse_math(feed: TokenFeed) -> ast.MathRepr | Error:
 
     if (end := feed.consume_and_check(TokType.CL_TRI, "math expression should end with close triangle `>`, not `{}`")) == Error:
         return end
-    return ast.MathRepr(seq)
+    return ast.MathRepr(seq, start.pos)
 
 def _parse_call(feed: TokenFeed) -> ast.CallRepr | Error:
     if type(start := feed.consume_and_check(TokType.VAR, "you should call using string literal, like `dump(@sink)`, not `{}`")) == Error:
@@ -206,7 +220,7 @@ def _parse_call(feed: TokenFeed) -> ast.CallRepr | Error:
     return ast.CallRepr(callable, args, start.pos)
 
 # TODO: check if generated function exists
-def _parse_c_call(feed: TokenFeed) -> ast.MinorExpression | Error:
+def _parse_c_call(feed: TokenFeed) -> ast.ValidExpression | Error:
     if type(start := feed.consume_and_check(TokType.CL_TRI, "c-call performed with close triangle `>` in front of function name, like `>printf();`, not `{}`")) == Error:
         return start
     if type(callable := feed.consume_and_check(TokType.VAR, "you should call using string literal, like `>print(\"Hello, World!\n\")`, not `>{}`")) == Error:
@@ -242,7 +256,23 @@ def _parse_builtin(feed: TokenFeed) -> ast.BuiltinRepr | Error:
         return Error(f"unknown built-in `{value.val}`", value.pos)
     return ast.BuiltinRepr(kind, start.pos)
 
-def _parse_expression(feed: TokenFeed) -> ast.MinorExpression | Error:
+# TODO: **ptr
+def _parse_val_from_ptr(feed: TokenFeed) -> ast.ValFromPtrRepr | Error:
+    if type(start := feed.consume_and_check(TokType.ASTRKS, "extracting the value from the pointer should start with asterisk `*`, not `{}`")) == Error:
+        return start
+    if (name := feed.consume_and_check(TokType.VAR, "pointer name should be string literal, like `ptr`, not `{}`")) == Error:
+        return name
+    return ast.ValFromPtrRepr(ast.VarPromise(name.val, name.pos), start.pos)
+
+# TODO: &&val
+def _parse_ptr_from_val(feed: TokenFeed) -> ast.PtrFromValRepr | Error:
+    if type(start := feed.consume_and_check(TokType.UMPERD, "getting the pointer to the value should start with umpersand `&`, not `{}`")) == Error:
+        return start
+    if (name := feed.consume_and_check(TokType.VAR, "value name should be string literal, like `ptr`, not `{}`")) == Error:
+        return name
+    return ast.PtrFromValRepr(ast.VarPromise(name.val, name.pos), start.pos)
+
+def _parse_expression(feed: TokenFeed) -> ast.ValidExpression | Error:
     base = feed.peek(0)
     action = feed.peek(1)
 
@@ -257,6 +287,8 @@ def _parse_expression(feed: TokenFeed) -> ast.MinorExpression | Error:
         case TokType.VAR    :
             feed.consume()
             return ast.VarPromise(base.val, base.pos)
+        case TokType.ASTRKS : return _parse_val_from_ptr(feed)
+        case TokType.UMPERD : return _parse_ptr_from_val(feed)
     
     return Error(f"unknown minor expression `{base.val}{action.val}`", base.pos)
 
@@ -270,6 +302,10 @@ def _parse_expression_as_statements(feed: TokenFeed) -> list[ast.ValidStatement]
             if type(t := feed.consume_and_check(TokType.SEMI, "statement should end with semicolon `;`, not `{}`")) == Error: return t
             return [ast.CallStatement(expr, expr.start)]
     match base.type:
+        case TokType.OP_TRI:
+            if type(expr := _parse_math(feed)) == Error: return expr
+            if type(t := feed.consume_and_check(TokType.SEMI, "statement should end with semicolon `;`, not `{}`")) == Error: return t
+            return [ast.MathStatement(expr, expr.start)]
         case TokType.CL_TRI:
             if type(expr := _parse_c_call(feed)) == Error: return expr
             if type(t := feed.consume_and_check(TokType.SEMI, "statement should end with semicolon `;`, not `{}`")) == Error: return t
@@ -507,6 +543,18 @@ def test_parse():
             call(_, 10, _);
             call(10, 10, 10);
             call(_, _, _);
+        }
+        """
+    )
+    print(a := parse(r))
+
+    r = read(
+        """
+        foo fn() := {
+            i *i32;
+            call(*i);
+            call(&i);
+            call(<i *_ ++>);
         }
         """
     )

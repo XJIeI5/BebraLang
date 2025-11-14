@@ -66,12 +66,21 @@ class BinOpType(Enum):
     REM = auto() # `%`
 
 class UnaryOpType(Enum):
-    DEC = auto() # `--`
-    INC = auto() # `++`
+    DEC  = auto() # `--`
+    INC  = auto() # `++`
+    VfrP = auto() # *()
+    PfrV = auto() # &()
 
 
 class DetailsData:
     def __init__(self): pass
+
+class NulLiteralRepr:
+    def __init__(self, start: Pos):
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        return f"{" "*sub}{tag}nil\n"
 
 class IntLiteralRepr:
     def __init__(self, value: int, start: Pos):
@@ -145,12 +154,34 @@ class VarPromise:
 
 Type = TypePromiseRepr | TypeRepr
 
+class PtrFromValRepr:
+    def __init__(self, var: Var|VarPromise, start: Pos):
+        # TODO: &&ptr
+        self.var: Var|VarPromise = var
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        buf = f"{" "*sub}{tag}&(ptr from val)\n"
+        buf += self.var._tostr(sub+2, "")
+        return buf
+
+class ValFromPtrRepr:
+    def __init__(self, var: Var|VarPromise, start: Pos):
+        # TODO: **ptr
+        self.var: Var|VarPromise = var
+        self.start: Pos = start
+
+    def _tostr(self, sub: int, tag: str) -> str:
+        buf = f"{" "*sub}{tag}*(val from ptr)\n"
+        buf += self.var._tostr(sub+2, "")
+        return buf
+
 class MathRepr: pass
 class CallRepr: pass
 class C_CallRepr: pass
 class Var: pass
 class BuiltinRepr: pass
-MinorExpression = MathRepr|IntLiteralRepr|FloatLiteralRepr|StringLiteralRepr|CallRepr|C_CallRepr|Var|VarPromise|BuiltinRepr
+ValidExpression = MathRepr|IntLiteralRepr|FloatLiteralRepr|StringLiteralRepr|CallRepr|C_CallRepr|Var|VarPromise|BuiltinRepr|PtrFromValRepr|ValFromPtrRepr
 
 class DeclRepr:
     def __init__(self, name: str, decl_type: Type, start: Pos):
@@ -165,9 +196,9 @@ class DeclRepr:
 
 
 class FnDeclRepr:
-    def __init__(self, decl: DeclRepr, by_defualt_val: Optional[MinorExpression]):
+    def __init__(self, decl: DeclRepr, by_defualt_val: Optional[ValidExpression]):
         self.decl: DeclRepr = decl
-        self.by_defualt_val: Optional[MinorExpression] = by_defualt_val
+        self.by_defualt_val: Optional[ValidExpression] = by_defualt_val
     
     def _tostr(self, sub: int, tag: str) -> str:
         buf = f"{" "*sub}{tag}fndecl:\n"
@@ -195,6 +226,16 @@ class FnSignatureRepr(DetailsData):
             buf += self.ret._tostr(sub+2, "ret = ")
         for arg in self.args:
             buf += arg._tostr(sub+2, "arg = ")
+        return buf
+
+class PtrRepr(DetailsData):
+    def __init__(self, ancestor_type: Type, start: Pos):
+        self.ancestor_type: Type = ancestor_type
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        buf = f"{" "*sub}{tag}*(ptr):\n"
+        buf += self.ancestor_type._tostr(sub+2, "")
         return buf
 
 class DynArrRepr:
@@ -273,15 +314,25 @@ class InitStatement:
         return buf
 
 class AssignStatement:
-    def __init__(self, assignable: Var|VarPromise, expr: MinorExpression, start: Pos):
+    def __init__(self, assignable: Var|VarPromise, expr: ValidExpression, start: Pos):
         self.assignable: Var|VarPromise = assignable
-        self.expr: MinorExpression = expr
+        self.expr: ValidExpression = expr
         self.start: Pos = start
 
     def _tostr(self, sub: int, tag: str) -> str:
         buf = f"{" "*sub}{tag}assign(statement):\n"
         buf += self.assignable._tostr(sub+2, "assign to = ")
         buf += self.expr._tostr(sub+2, "expr = ")
+        return buf
+
+class MathStatement:
+    def __init__(self, math_repr: MathRepr, start: Pos):
+        self.math_repr: MathRepr = math_repr
+        self.start: Pos = start
+    
+    def _tostr(self, sub: int, tag: str) -> str:
+        buf = f"{" "*sub}{tag}math(statement):\n"
+        buf += self.math_repr._tostr(sub+2, "math = ")
         return buf
 
 class DirectiveCallStatement:
@@ -295,8 +346,8 @@ class DirectiveCallStatement:
         return buf
 
 class RetStatement:
-    def __init__(self, expr: MinorExpression|None, start: Pos):
-        self.expr: MinorExpression|None = expr
+    def __init__(self, expr: ValidExpression|None, start: Pos):
+        self.expr: ValidExpression|None = expr
         self.start: Pos = start
     
     def _tostr(self, sub: int, tag: str) -> str:
@@ -306,7 +357,7 @@ class RetStatement:
         return buf
 
 # TODO: make it throught inheritance
-ValidStatement = CallStatement|C_CallStatement|RetStatement|DirectiveCallStatement|InitStatement|DeclStatement
+ValidStatement = CallStatement|C_CallStatement|RetStatement|DirectiveCallStatement|InitStatement|DeclStatement|MathRepr
 class BodyRepr:
     def __init__(self, statements: list[ValidStatement], start: Pos):
         self.statements: list[ValidStatement] = statements
@@ -348,7 +399,7 @@ class BuiltinRepr:
     def _tostr(self, sub: int, tag: str) -> str:
         return f"{" "*sub}{tag}builtin @{self.type.name}\n"
 
-ValidVarValue = MinorExpression|BodyRepr
+ValidVarValue = ValidExpression|BodyRepr
 # TODO: rename to AssignRepr for consistancy
 class Var:
     def __init__(self, decl: DeclRepr, value: ValidVarValue):
@@ -365,7 +416,7 @@ class Var:
         buf += self.value._tostr(sub+2, "val = ")
         return buf
 
-ValidCallArg = IntLiteralRepr|FloatLiteralRepr|StringLiteralRepr|CallRepr|Var|BuiltinRepr|UseDefualtRepr
+ValidCallArg = IntLiteralRepr|FloatLiteralRepr|StringLiteralRepr|CallRepr|Var|BuiltinRepr|UseDefualtRepr|ValFromPtrRepr|PtrFromValRepr
 class CallRepr:
     def __init__(self, callable: Var|VarPromise, args: list[ValidCallArg], start: Pos):
         self.callable: Var|VarPromise = callable
@@ -405,42 +456,18 @@ class UserDefinedTypeData(DetailsData):
 
 # NOTE: it is expected that BuiltinRepr only represents `>` `<` `>=` `<=` `==` `!=`
 #       in context of mathable type
+# TODO: add ValFromPtrRepr and PtrFromValRepr support
 ValidMathableType = IntLiteralRepr|FloatLiteralRepr|BinaryOpRepr|UnaryOpRepr|CallRepr|Var|VarPromise|BuiltinRepr
 class MathRepr:
-    def __init__(self, seq: list[ValidMathableType]):
+    def __init__(self, seq: list[ValidMathableType], start: Pos):
         # NOTE: this means that <get_one() 2 +> is valid
         self.seq: list[ValidMathableType] = seq
+        self.start: Pos = start
     
     def _tostr(self, sub: int, tag: str) -> str:
         buf = f"{" "*sub}{tag}math:\n"
         for mathable in self.seq:
             buf += mathable._tostr(sub+2, "mathable = ")
-        return buf
-
-class PtrToValRepr:
-    def __init__(self, var: Var, start: Pos):
-        self.var: Var = var
-        self.start: Pos = start
-    
-    def _tostr(self, sub: int, tag: str) -> str:
-        raise NotImplementedError
-
-class ValToPtrRepr:
-    def __init__(self, var: Var, start: Pos):
-        self.var: Var = var
-        self.start: Pos = start
-
-    def _tostr(self, sub: int, tag: str) -> str:
-        raise NotImplementedError
-
-class PtrRepr(DetailsData):
-    def __init__(self, ancestor_type: Type, start: Pos):
-        self.ancestor_type: Type = ancestor_type
-        self.start: Pos = start
-    
-    def _tostr(self, sub: int, tag: str) -> str:
-        buf = f"{" "*sub}{tag}ptr:\n"
-        buf += self.ancestor_type._tostr(sub+2, "ancestor = ")
         return buf
 
 class AST:

@@ -34,6 +34,7 @@ def _get_defualt_value(base_type: ast.TypeKind, start: Pos) -> Any:
     match base_type:
         case ast.TypeKind.i8|ast.TypeKind.i16|ast.TypeKind.i32|ast.TypeKind.i64: return ast.IntLiteralRepr(0, start)
         case ast.TypeKind.u8|ast.TypeKind.u16|ast.TypeKind.u32|ast.TypeKind.u64: return ast.IntLiteralRepr(0, start)
+        case ast.TypeKind.ptr: return ast.NulLiteralRepr(start)
     raise NotImplementedError
 
 def _resolve_var_promise(promise: ast.VarPromise, ctx: Context) -> ast.Var | Error:
@@ -97,6 +98,7 @@ def _check_statement(state: ast.ValidStatement, ctx: Context) -> Optional[Error]
         case ast.InitStatement: return _check_init_var(state.var, ctx)
         case ast.DeclStatement: return _check_decl_statement(state.decl, ctx)
         case ast.AssignStatement: return _check_assign_statement(state, ctx)
+        case ast.MathStatement: return _check_math_expr(state.math_repr, ctx)
     raise NotImplementedError
 
 def _check_body(body: ast.BodyRepr, new_ctx: Context) -> Optional[Error]:
@@ -157,6 +159,12 @@ def _check_call_expr(call: ast.CallRepr, ctx: Context) -> Optional[Error]:
             if type(actual_var := _resolve_var_promise(in_call, ctx)) == Error:
                 return actual_var
             call.args[i] = actual_var
+        elif type(in_call) == ast.PtrFromValRepr:
+            if type(err := _check_ptr_from_val(in_call, ctx)) == Error:
+                return err
+        elif type(in_call) == ast.ValFromPtrRepr:
+            if type(err := _check_val_from_ptr(in_call, ctx)) == Error:
+                return err
         elif type(in_call) == ast.UseDefualtRepr and in_fn.by_defualt_val is None:
             return Error(f"you try to use defualt value of argument without defualt value", in_call.start)
         # TODO: check types
@@ -171,7 +179,19 @@ def _check_c_call_expr(c_call: ast.C_CallRepr, ctx: Context) -> Optional[Error]:
             if type(err := _check_expression(in_call, ctx)) == Error:
                 return err
 
-def _check_expression(expr: ast.MinorExpression, ctx: Context) -> Optional[Error]:
+def _check_val_from_ptr(val_from_ptr: ast.ValFromPtrRepr, ctx: Context) -> Optional[Error]:
+    if type(val_from_ptr.var) == ast.VarPromise:
+        if (actual_var := _resolve_var_promise(val_from_ptr.var, ctx)) == Error:
+            return actual_var
+        val_from_ptr.var = actual_var
+
+def _check_ptr_from_val(ptr_from_val: ast.PtrFromValRepr, ctx: Context) -> Optional[Error]:
+    if type(ptr_from_val.var) == ast.VarPromise:
+        if (actual_var := _resolve_var_promise(ptr_from_val.var, ctx)) == Error:
+            return actual_var
+        ptr_from_val.var = actual_var
+
+def _check_expression(expr: ast.ValidExpression, ctx: Context) -> Optional[Error]:
     match type(expr):
         case ast.MathRepr: return _check_math_expr(expr, ctx)
         case ast.IntLiteralRepr | ast.FloatLiteralRepr | ast.StringLiteralRepr : return
@@ -181,6 +201,8 @@ def _check_expression(expr: ast.MinorExpression, ctx: Context) -> Optional[Error
         case ast.VarPromise: raise NotImplementedError
         # NOTE: it's caller responsibility to replace VarPromise with Var's
         case ast.BuiltinRepr: raise NotImplementedError
+        case ast.ValFromPtrRepr: return _check_val_from_ptr(expr, ctx)
+        case ast.PtrFromValRepr: return _check_ptr_from_val(expr, ctx)
 
     raise NotImplementedError
 
@@ -204,6 +226,7 @@ def _check_init_var(var: ast.Var|ast.VarPromise, ctx: Context) -> Optional[Error
     if var.decl.type.base_type == ast.TypeKind.fn:
         fn_repr: ast.FnSignatureRepr = var.decl.type.details 
         ctx = Context(ctx)
+        # TODO: append to new ctx
         for fn_decl in fn_repr.args:
             ctx.append_var(ast.Var(fn_decl.decl, UNKNOWN_VALUE_AT_COMPTIME))
     return _check_var_value(var.value, ctx)
